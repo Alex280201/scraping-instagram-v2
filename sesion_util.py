@@ -1,18 +1,21 @@
+
 """Utilidades compartidas para abrir Instagram con la sesión guardada."""
+
 import os
 import sys
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 ARCHIVO_SESION = "sesion.json"
+URL_INSTAGRAM = "https://www.instagram.com/"
 
 
 def lanzar_navegador(p):
-    """Usa Google Chrome real si está instalado (Instagram lo detecta menos
-    como automatización); si no, usa el Chromium de Playwright."""
-    opciones = dict(
-        headless=False,
-        ignore_default_args=["--enable-automation"],
-        args=["--disable-blink-features=AutomationControlled"],
-    )
+    """Abre Chrome si está instalado; si no, usa Chromium de Playwright."""
+    opciones = {
+        "headless": False,
+        "args": ["--disable-blink-features=AutomationControlled"],
+    }
+
     try:
         return p.chromium.launch(channel="chrome", **opciones)
     except Exception:
@@ -20,26 +23,70 @@ def lanzar_navegador(p):
 
 
 def sesion_activa(contexto):
-    """True si el contexto tiene una cookie de sesión de Instagram."""
-    return any(c["name"] == "sessionid" and c["value"] for c in contexto.cookies())
+    """Comprueba si existe una cookie de sesión de Instagram."""
+    try:
+        return any(
+            cookie.get("name") == "sessionid"
+            and cookie.get("value")
+            for cookie in contexto.cookies()
+        )
+    except Exception:
+        return False
 
 
 def abrir_con_sesion(p):
-    """Devuelve (navegador, contexto, pagina) ya logueado.
-    Si la sesión no existe o caducó, avisa y termina el programa."""
-    if not os.path.exists(ARCHIVO_SESION):
-        sys.exit("No existe sesion.json. Ejecuta primero:  python guardar_sesion.py")
+    """
+    Devuelve (navegador, contexto, pagina) usando la sesión guardada.
 
-    navegador = lanzar_navegador(p)
-    contexto = navegador.new_context(storage_state=ARCHIVO_SESION)
-    pagina = contexto.new_page()
-    pagina.goto("https://www.instagram.com/")
-    pagina.wait_for_timeout(3000)
-
-    if "/accounts/login" in pagina.url or not sesion_activa(contexto):
-        navegador.close()
+    Si no existe la sesión, está caducada o no se puede abrir Instagram,
+    muestra un mensaje claro.
+    """
+    if not os.path.isfile(ARCHIVO_SESION):
         sys.exit(
-            "La sesión de Instagram caducó o fue cerrada.\n"
-            "Vuelve a iniciar sesión con:  python guardar_sesion.py"
+            "No existe sesion.json. Ejecuta primero: "
+            "python guardar_sesion.py"
         )
-    return navegador, contexto, pagina
+
+    navegador = None
+
+    try:
+        navegador = lanzar_navegador(p)
+        contexto = navegador.new_context(
+            storage_state=ARCHIVO_SESION
+        )
+        pagina = contexto.new_page()
+
+        try:
+            pagina.goto(
+                URL_INSTAGRAM,
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+        except PlaywrightTimeoutError:
+            # Si la página sigue cargando, comprobamos su estado actual.
+            if "instagram.com" not in pagina.url:
+                raise
+
+        pagina.wait_for_timeout(3000)
+
+        if "/accounts/login" in pagina.url or not sesion_activa(contexto):
+            navegador.close()
+            sys.exit(
+                "La sesión de Instagram no está activa o ha caducado.\n"
+                "Inicia sesión de nuevo con: python guardar_sesion.py"
+            )
+
+        return navegador, contexto, pagina
+
+    except Exception as error:
+        if navegador is not None:
+            try:
+                navegador.close()
+            except Exception:
+                pass
+
+        sys.exit(
+            "No se pudo abrir Instagram con la sesión guardada.\n"
+            "Comprueba tu conexión a Internet y la URL.\n"
+            f"Detalle: {error}"
+        )

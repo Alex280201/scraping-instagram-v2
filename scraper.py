@@ -18,7 +18,7 @@ from conexiones import exportar_conexiones, extraer_conexiones
 from sesion_util import abrir_con_sesion
 
 # ---------------- Configuración ----------------
-USUARIO = "alexchicango"
+USUARIO = "sausage_player"
 EXTRAER_CONEXIONES = True   # True = también extrae seguidores y seguidos (documento aparte)
 LIMITE = None          # None = todas las publicaciones; o un número para probar (ej. 5)
 MAX_ENLACES = 500      # tope de seguridad al hacer scroll
