@@ -1,5 +1,6 @@
 
 import json
+import os
 import random
 import re
 from playwright.sync_api import sync_playwright
@@ -7,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from sesion_util import abrir_con_sesion
 
-USUARIO = "alexchicango"
+USUARIO = os.getenv("INSTAGRAM_TARGET")
 
 
 def pausa(minimo=2, maximo=4):

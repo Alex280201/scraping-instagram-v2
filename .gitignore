@@ -42,3 +42,6 @@ instagram_conexiones.xlsx
 
 debug_*.png
 debug_*.html
+
+# Datos de personas scrapeadas (privados)
+datos/

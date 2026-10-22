@@ -1,11 +1,12 @@
 
+import os
 import random
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
 from sesion_util import abrir_con_sesion
 
-USUARIO = "alexchicango"
+USUARIO = os.getenv("INSTAGRAM_TARGET")
 
 with sync_playwright() as p:
     navegador, contexto, pagina = abrir_con_sesion(p)

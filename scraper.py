@@ -2,31 +2,62 @@
 
 Uso:
     python guardar_sesion.py   (solo cuando no hay sesión o caducó)
-    python scraper.py
+    python scraper.py                      -> usa INSTAGRAM_TARGET del .env
+    python scraper.py otro_usuario         -> scrapea otro perfil sin tocar el .env
+    python scraper.py otro_usuario --si    -> sin pedir confirmación
+    python scraper.py --sin-imagenes       -> no descarga las imágenes
+
+Todo se guarda en datos/<usuario>/ (así no se mezclan personas).
 """
+import argparse
 import csv
 import json
+import os
 import random
 import re
+import shutil
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
+import conexiones as mod_conexiones
 from conexiones import exportar_conexiones, extraer_conexiones
 from sesion_util import abrir_con_sesion
 
+BASE = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE, ".env"))
+
+
+def _argumentos():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("usuario", nargs="?")
+    ap.add_argument("--si", action="store_true")
+    ap.add_argument("--sin-imagenes", action="store_true")
+    args, _ = ap.parse_known_args()
+    return args
+
+
+_ARGS = _argumentos()
+
 # ---------------- Configuración ----------------
-USUARIO = "sausage_player"
-EXTRAER_CONEXIONES = True   # True = también extrae seguidores y seguidos (documento aparte)
+# Única fuente del perfil a scrapear: argumento de consola > INSTAGRAM_TARGET del .env
+USUARIO = (_ARGS.usuario or os.getenv("INSTAGRAM_TARGET") or "").strip().lstrip("@").lower()
+if not USUARIO or USUARIO == "usuario_objetivo":
+    raise SystemExit("Define el perfil: INSTAGRAM_TARGET en el .env o  python scraper.py <usuario>")
+GUARDAR_IMAGENES = not _ARGS.sin_imagenes   # descarga la imagen principal de cada publicación
+DIR_SALIDA = os.path.join(BASE, "datos", USUARIO)
+DIR_IMAGENES = os.path.join(DIR_SALIDA, "imagenes")
+EXTRAER_CONEXIONES = False   # True = también extrae seguidores y seguidos (documento aparte)
 LIMITE = None          # None = todas las publicaciones; o un número para probar (ej. 5)
 MAX_ENLACES = 500      # tope de seguridad al hacer scroll
 ZONA = ZoneInfo("America/Guayaquil")  # Ecuador (UTC-5)
 
-SALIDA_JSON = "instagram_datos.json"
-SALIDA_CSV = "instagram_publicaciones.csv"
-SALIDA_XLSX = "instagram_publicaciones.xlsx"
+SALIDA_JSON = os.path.join(DIR_SALIDA, "instagram_datos.json")
+SALIDA_CSV = os.path.join(DIR_SALIDA, "instagram_publicaciones.csv")
+SALIDA_XLSX = os.path.join(DIR_SALIDA, "instagram_publicaciones.xlsx")
 
 
 # ---------------- Utilidades ----------------
@@ -107,10 +138,30 @@ def extraer_perfil_y_enlaces(pagina):
     return perfil, sorted(enlaces)
 
 
+def guardar_imagen(pagina, url_imagen, codigo):
+    """Descarga la imagen con la misma sesión del navegador (las URLs caducan, por eso se hace al momento)."""
+    if not (GUARDAR_IMAGENES and url_imagen and codigo):
+        return None
+    try:
+        resp = pagina.context.request.get(url_imagen, timeout=30000)
+        if not resp.ok:
+            return None
+        tipo = resp.headers.get("content-type", "")
+        ext = ".png" if "png" in tipo else ".webp" if "webp" in tipo else ".jpg"
+        os.makedirs(DIR_IMAGENES, exist_ok=True)
+        ruta = os.path.join(DIR_IMAGENES, codigo + ext)
+        with open(ruta, "wb") as f:
+            f.write(resp.body())
+        return os.path.join("imagenes", codigo + ext)
+    except Exception as e:
+        print(f"   aviso: no se pudo guardar la imagen de {codigo}: {str(e).splitlines()[0]}")
+        return None
+
+
 def extraer_publicacion(pagina, href):
     url = "https://www.instagram.com" + href
-    pagina.goto(url)
-    pagina.wait_for_selector("time", timeout=15000)
+    pagina.goto(url, wait_until="domcontentloaded", timeout=45000)
+    pagina.wait_for_selector("time", timeout=20000)
     pagina.wait_for_timeout(pausa(1, 2))
 
     soup = BeautifulSoup(pagina.content(), "lxml")
@@ -118,12 +169,19 @@ def extraer_publicacion(pagina, href):
     og_texto = og["content"] if og else ""
     tiempo = soup.find("time")
     imagen = soup.find("meta", property="og:image")
+    url_imagen = imagen["content"] if imagen else None
+    # Respaldo del caption: el título/encabezado visible de la publicación (og:description a veces no lo trae)
+    h1 = soup.select_one("article h1")
+    caption_dom = h1.get_text("\n", strip=True) if h1 else ""
+    codigo = re.search(r"/(?:p|reel)/([^/]+)/", href)
     return {
         "url": url,
         "href": href,
         "fecha_iso": tiempo["datetime"] if tiempo and tiempo.has_attr("datetime") else None,
         "og_texto": og_texto,
-        "imagen": imagen["content"] if imagen else None,
+        "caption_dom": caption_dom,
+        "imagen": url_imagen,
+        "imagen_archivo": guardar_imagen(pagina, url_imagen, codigo.group(1) if codigo else None),
     }
 
 
@@ -133,7 +191,7 @@ def limpiar_publicacion(crudo):
     likes = re.search(r"([\d.,]+\s?[KMkm]?)\s+(?:likes?|me gusta)", og, re.IGNORECASE)
     coment = re.search(r"([\d.,]+\s?[KMkm]?)\s+(?:comments?|comentarios)", og, re.IGNORECASE)
     desc = re.search(r':\s*[“"](.*)[”"]\.?\s*$', og, re.DOTALL)
-    descripcion = (desc.group(1) if desc else "").strip()
+    descripcion = (desc.group(1) if desc else "").strip() or (crudo.get("caption_dom") or "").strip()
 
     fecha = pd.to_datetime(crudo["fecha_iso"], utc=True, errors="coerce")
     hay = pd.notna(fecha)
@@ -153,11 +211,13 @@ def limpiar_publicacion(crudo):
         "tiene_descripcion": "Sí" if descripcion else "No",
         "url": crudo["url"],
         "imagen": crudo["imagen"],
+        "imagen_archivo": crudo.get("imagen_archivo"),
     }
 
 
 # ---------------- Exportación ----------------
 def exportar(perfil, publicaciones, errores):
+    os.makedirs(DIR_SALIDA, exist_ok=True)
     df = pd.DataFrame(publicaciones)
     df = df.sort_values(["fecha", "hora"], na_position="last").reset_index(drop=True)
     df.insert(0, "n", df.index + 1)
@@ -170,6 +230,7 @@ def exportar(perfil, publicaciones, errores):
         "likes_promedio": round(float(df["likes"].mean()), 1) if df["likes"].notna().any() else None,
         "primera_fecha": df["fecha"].min(),
         "ultima_fecha": df["fecha"].max(),
+        "con_imagen_guardada": int(df["imagen_archivo"].notna().sum()),
         "errores": errores,
     }
 
@@ -201,6 +262,10 @@ def exportar(perfil, publicaciones, errores):
 
 # ---------------- Programa principal ----------------
 def main():
+    print(f"\nPerfil a scrapear: @{USUARIO}")
+    print(f"Carpeta de salida: {DIR_SALIDA}")
+    if not _ARGS.si:
+        input("ENTER para continuar o Ctrl+C para cancelar... ")
     crudas, errores, conexiones = [], [], None
     with sync_playwright() as p:
         navegador, contexto, pagina = abrir_con_sesion(p)
@@ -229,7 +294,12 @@ def main():
         navegador.close()
 
     if conexiones:
-        exportar_conexiones(USUARIO, conexiones)
+        if exportar_conexiones(USUARIO, conexiones):
+            os.makedirs(DIR_SALIDA, exist_ok=True)
+            for ruta in (mod_conexiones.SALIDA_JSON, mod_conexiones.SALIDA_XLSX,
+                         mod_conexiones.SALIDA_CSV_SEGUIDORES, mod_conexiones.SALIDA_CSV_SEGUIDOS):
+                if os.path.exists(ruta):
+                    shutil.move(ruta, os.path.join(DIR_SALIDA, os.path.basename(ruta)))
 
     if not crudas:
         raise SystemExit("No se extrajo ninguna publicación; no se generaron archivos.")
@@ -243,7 +313,7 @@ def main():
     print("\n--- RESUMEN ---")
     for k, v in resumen.items():
         print(f"{k}: {v}")
-    print(f"\nArchivos generados: {SALIDA_XLSX}, {SALIDA_JSON}, {SALIDA_CSV}")
+    print(f"\nArchivos generados en {DIR_SALIDA}")
 
 
 if __name__ == "__main__":
