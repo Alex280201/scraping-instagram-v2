@@ -45,3 +45,6 @@ debug_*.html
 
 # Datos de personas scrapeadas (privados)
 datos/
+
+# Privado: datos de personas, sesión y credenciales
+legacy/datos_antiguos/

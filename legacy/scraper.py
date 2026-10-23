@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 import conexiones as mod_conexiones
+from corridas import nueva_corrida
 from conexiones import exportar_conexiones, extraer_conexiones
 from sesion_util import abrir_con_sesion
 
@@ -48,16 +49,15 @@ USUARIO = (_ARGS.usuario or os.getenv("INSTAGRAM_TARGET") or "").strip().lstrip(
 if not USUARIO or USUARIO == "usuario_objetivo":
     raise SystemExit("Define el perfil: INSTAGRAM_TARGET en el .env o  python scraper.py <usuario>")
 GUARDAR_IMAGENES = not _ARGS.sin_imagenes   # descarga la imagen principal de cada publicación
-DIR_SALIDA = os.path.join(BASE, "datos", USUARIO)
-DIR_IMAGENES = os.path.join(DIR_SALIDA, "imagenes")
+# Cada scraping crea su propia carpeta: datos/<usuario>/<AAAA-MM-DD_HHMM>/  (se asigna en main())
+DIR_SALIDA = None
+DIR_IMAGENES = None
 EXTRAER_CONEXIONES = False   # True = también extrae seguidores y seguidos (documento aparte)
 LIMITE = None          # None = todas las publicaciones; o un número para probar (ej. 5)
 MAX_ENLACES = 500      # tope de seguridad al hacer scroll
 ZONA = ZoneInfo("America/Guayaquil")  # Ecuador (UTC-5)
 
-SALIDA_JSON = os.path.join(DIR_SALIDA, "instagram_datos.json")
-SALIDA_CSV = os.path.join(DIR_SALIDA, "instagram_publicaciones.csv")
-SALIDA_XLSX = os.path.join(DIR_SALIDA, "instagram_publicaciones.xlsx")
+SALIDA_JSON = SALIDA_CSV = SALIDA_XLSX = None
 
 
 # ---------------- Utilidades ----------------
@@ -262,10 +262,17 @@ def exportar(perfil, publicaciones, errores):
 
 # ---------------- Programa principal ----------------
 def main():
+    global DIR_SALIDA, DIR_IMAGENES, SALIDA_JSON, SALIDA_CSV, SALIDA_XLSX
     print(f"\nPerfil a scrapear: @{USUARIO}")
-    print(f"Carpeta de salida: {DIR_SALIDA}")
+    print(f"Se creará una carpeta nueva en: datos\\{USUARIO}\\<fecha y hora de ahora>")
     if not _ARGS.si:
         input("ENTER para continuar o Ctrl+C para cancelar... ")
+    DIR_SALIDA = nueva_corrida(USUARIO)
+    DIR_IMAGENES = os.path.join(DIR_SALIDA, "imagenes")
+    SALIDA_JSON = os.path.join(DIR_SALIDA, "instagram_datos.json")
+    SALIDA_CSV = os.path.join(DIR_SALIDA, "instagram_publicaciones.csv")
+    SALIDA_XLSX = os.path.join(DIR_SALIDA, "instagram_publicaciones.xlsx")
+    print(f"Carpeta de este scraping: {DIR_SALIDA}")
     crudas, errores, conexiones = [], [], None
     with sync_playwright() as p:
         navegador, contexto, pagina = abrir_con_sesion(p)
@@ -302,6 +309,10 @@ def main():
                     shutil.move(ruta, os.path.join(DIR_SALIDA, os.path.basename(ruta)))
 
     if not crudas:
+        try:
+            os.rmdir(DIR_SALIDA)  # no dejar una carpeta vacía
+        except OSError:
+            pass
         raise SystemExit("No se extrajo ninguna publicación; no se generaron archivos.")
 
     publicaciones = [limpiar_publicacion(c) for c in crudas]
@@ -314,6 +325,7 @@ def main():
     for k, v in resumen.items():
         print(f"{k}: {v}")
     print(f"\nArchivos generados en {DIR_SALIDA}")
+    print(f"Siguiente paso:  python analisis/main.py {USUARIO}")
 
 
 if __name__ == "__main__":

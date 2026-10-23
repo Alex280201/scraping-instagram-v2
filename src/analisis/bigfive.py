@@ -1,23 +1,16 @@
-import sys
-import os
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.dirname(CURRENT_DIR)
-for ruta in (ROOT_DIR, CURRENT_DIR):
-    if ruta not in sys.path:
-        sys.path.insert(0, ruta)
-
+"""Perfil Big Five (OCEAN): evidencia por similitud de embeddings + generación con Gemini."""
 import json
 import time
 import numpy as np
 from pydantic import BaseModel, Field
 from google.genai import types, errors
 
-from config import GEMINI_MODEL, GEMINI_MODEL_RESPALDO, DATOS_DIR, INSTAGRAM_TARGET
-from gemini_cliente import obtener_cliente
-from cargador import cargar_datos_usuario
-from embeddings import embeber, procesar_y_guardar_embeddings
+from src.analisis.cargador import cargar_datos_usuario
+from src.config import GEMINI_MODEL, GEMINI_MODEL_RESPALDO, rutas_usuario
+from src.embeddings.embeddings import embeber, procesar_y_guardar_embeddings
+from src.gemini.cliente import obtener_cliente
 
+MAX_TEXTOS_COMPLETOS = 80   # hasta este número se envían TODOS los textos a Gemini; si hay más, se filtra por similitud
 RASGOS = ["apertura", "responsabilidad", "extraversion", "amabilidad", "neuroticismo"]
 
 # Frases ancla: se vectorizan y se comparan con tus textos para recuperar la evidencia más relevante por rasgo.
@@ -62,7 +55,7 @@ def _techo_confianza(n_textos: int) -> float:
 
 def seleccionar_evidencia(cliente, matriz, docs, k=4):
     """RAG por rasgo: los k textos más cercanos a las anclas de cada rasgo."""
-    if len(docs) <= 12:
+    if len(docs) <= MAX_TEXTOS_COMPLETOS:
         return docs
     elegidos = {}
     anclas = [(r, a) for r in RASGOS for a in ANCLAS[r]]
@@ -104,10 +97,11 @@ def _generar_con_reintentos(cliente, prompt, intentos=6):
     raise RuntimeError("No se pudo generar el perfil con ningún modelo.")
 
 
-def generar_perfil_bigfive():
+def generar_perfil_bigfive(usuario, forzar=False):
+    rutas = rutas_usuario(usuario).crear()
     cliente = obtener_cliente()
-    matriz, docs = procesar_y_guardar_embeddings()
-    datos = cargar_datos_usuario()
+    matriz, docs = procesar_y_guardar_embeddings(usuario, forzar=forzar)
+    datos = cargar_datos_usuario(usuario)
     metricas = datos["metricas"]
 
     docs = docs or []
@@ -136,9 +130,9 @@ TEXTOS ({len(evidencia)} de {len(docs)} disponibles):
         r.confianza = round(min(max(r.confianza, 0.0), techo), 2)
 
     salida = perfil.model_dump()
-    salida["meta"] = {"usuario": INSTAGRAM_TARGET, "textos_disponibles": len(docs), "techo_confianza": techo,
+    salida["meta"] = {"usuario": usuario, "textos_disponibles": len(docs), "techo_confianza": techo,
                       "modelo": modelo_usado}
-    ruta = os.path.join(DATOS_DIR, "perfil_bigfive.json")
+    ruta = rutas.bigfive_json
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(salida, f, ensure_ascii=False, indent=2)
 
@@ -148,6 +142,3 @@ TEXTOS ({len(evidencia)} de {len(docs)} disponibles):
     print(f"\n{perfil.resumen}\n\nLimitaciones: {perfil.limitaciones}\n[Guardado en {ruta}]")
     return salida
 
-
-if __name__ == "__main__":
-    generar_perfil_bigfive()

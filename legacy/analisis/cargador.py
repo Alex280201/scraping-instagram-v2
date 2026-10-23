@@ -7,21 +7,12 @@ for ruta in (ROOT_DIR, CURRENT_DIR):
     if ruta not in sys.path:
         sys.path.insert(0, ruta)
 
-import csv
 import json
 import re
 from collections import Counter
 from statistics import mean
 
 from config import INSTAGRAM_TARGET, DATOS_DIR, crear_carpetas
-
-
-def _json(nombre):
-    ruta = os.path.join(ROOT_DIR, nombre)
-    if os.path.exists(ruta):
-        with open(ruta, encoding="utf-8") as f:
-            return json.load(f)
-    return None
 
 
 def _numero(valor):
@@ -48,19 +39,6 @@ def _json_dir(nombre):
         with open(ruta, encoding="utf-8") as f:
             return json.load(f)
     return None
-
-
-def _publicaciones():
-    """Respaldo (archivos antiguos en la raíz): datos_completos.json o instagram_publicaciones.csv."""
-    completos = _json("datos_completos.json") or {}
-    pubs = completos.get("publicaciones_detalle") or []
-    if pubs:
-        return pubs
-    ruta = os.path.join(ROOT_DIR, "instagram_publicaciones.csv")
-    if os.path.exists(ruta):
-        with open(ruta, encoding="utf-8-sig") as f:
-            return list(csv.DictReader(f))
-    return []
 
 
 def _metricas(perfil, pubs, conexiones):
@@ -90,39 +68,32 @@ def _metricas(perfil, pubs, conexiones):
 
 
 def cargar_datos_usuario():
-    """Consolida perfil, publicaciones y métricas en un solo diccionario."""
+    """Consolida perfil, publicaciones y métricas del scraping elegido (datos/<usuario>/<fecha>/)."""
     crear_carpetas()
-    nuevo = _json_dir("instagram_datos.json")  # generado por scraper.py en datos/<usuario>/
-    if nuevo:
-        perfil, pubs = nuevo.get("perfil", {}), nuevo.get("publicaciones", [])
-        conexiones = _json_dir("instagram_conexiones.json")
-    else:  # compatibilidad con archivos antiguos en la raíz
-        perfil = _json("perfil_limpio.json") or _json("datos_completos.json") or {}
-        pubs = _publicaciones()
-        conexiones = _json("instagram_conexiones.json")
-        print("[Cargador] AVISO: usando archivos antiguos de la raíz; vuelve a ejecutar scraper.py para este perfil.")
+    nuevo = _json_dir("instagram_datos.json")
+    if not nuevo:
+        raise SystemExit(f"No hay datos en {DATOS_DIR}. Ejecuta primero:  python scraper.py {INSTAGRAM_TARGET}")
+    perfil, pubs = nuevo.get("perfil", {}), nuevo.get("publicaciones", [])
+    conexiones = _json_dir("instagram_conexiones.json")
 
     # Seguro anti-mezcla: los datos deben pertenecer al perfil configurado
     de_quien = (perfil.get("usuario") or "").strip().lstrip("@").lower()
-    if de_quien and de_quien != INSTAGRAM_TARGET.strip().lstrip("@").lower():
-        raise SystemExit(f"Los datos cargados son de '{de_quien}' pero INSTAGRAM_TARGET es '{INSTAGRAM_TARGET}'. "
-                         f"Ejecuta: python scraper.py {INSTAGRAM_TARGET}")
-    if not perfil and not pubs:
-        raise SystemExit(f"No hay datos en {DATOS_DIR}. Ejecuta primero: python scraper.py {INSTAGRAM_TARGET}")
+    if de_quien and de_quien != INSTAGRAM_TARGET:
+        raise SystemExit(f"Los datos de {DATOS_DIR} son de '{de_quien}' pero se pidió '{INSTAGRAM_TARGET}'.")
 
     publicaciones = [
         {
             "url": p.get("url", ""),
             "tipo": p.get("tipo", ""),
-            "fecha": p.get("fecha", ""),
+            "fecha": p.get("fecha") or "",
             "likes": _numero(p.get("likes")),
             "comentarios": _numero(p.get("comentarios")),
             "descripcion": (p.get("descripcion") or "").strip(),
         }
         for p in pubs
     ]
-    print(f"[Cargador] Perfil: {'OK' if perfil else 'NO encontrado'} | Publicaciones: {len(publicaciones)} "
-          f"(con texto: {sum(1 for p in publicaciones if p['descripcion'])})")
+    print(f"[Cargador] @{INSTAGRAM_TARGET} | scraping {os.path.basename(DATOS_DIR)} | "
+          f"publicaciones: {len(publicaciones)} (con texto: {sum(1 for p in publicaciones if p['descripcion'])})")
     return {
         "usuario": INSTAGRAM_TARGET,
         "perfil": perfil,
