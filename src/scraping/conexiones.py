@@ -23,7 +23,8 @@ import pandas as pd
 # ---------------- Configuración ----------------
 LIMITE_CONEXIONES = None   # None = todos; o un número por lista para probar (ej. 30)
 MAX_SCROLLS = 300          # tope de seguridad de scrolls por lista
-MAX_SIN_PROGRESO = 6       # scrolls seguidos sin usuarios nuevos antes de parar
+MAX_SIN_PROGRESO = 12      # scrolls seguidos sin usuarios nuevos antes de parar (cada uno espera un poco más que el anterior)
+CHECKPOINT_CADA = 20       # guardado parcial cada N usuarios nuevos (para no perder avance si algo falla)
 ZONA = ZoneInfo("America/Guayaquil")  # Ecuador (UTC-5)
 
 SALIDA_XLSX = "instagram_conexiones.xlsx"
@@ -65,11 +66,15 @@ JS_FILAS = r"""
            usuariosEn(nodo.parentElement).size === 1) {
       nodo = nodo.parentElement;
     }
-    if (!filas[usuario] || (nodo.innerText || '').length > filas[usuario].length) {
-      filas[usuario] = nodo.innerText || '';
+    const img = nodo.querySelector('img');
+    const foto = img ? (img.currentSrc || img.src || '') : '';
+    if (!filas[usuario] || (nodo.innerText || '').length > filas[usuario].texto.length) {
+      filas[usuario] = {texto: nodo.innerText || '', foto: foto || (filas[usuario] ? filas[usuario].foto : '')};
+    } else if (!filas[usuario].foto && foto) {
+      filas[usuario].foto = foto;
     }
   });
-  return Object.entries(filas).map(([usuario, texto]) => ({usuario, texto}));
+  return Object.entries(filas).map(([usuario, v]) => ({usuario, texto: v.texto, foto: v.foto}));
 }
 """
 
@@ -112,7 +117,33 @@ def limpiar_conexion(usuario, texto):
         "nombre": nombre,
         "tiene_nombre": "Sí" if nombre else "No",
         "url": f"https://www.instagram.com/{usuario}/",
+        "foto_archivo": None,
     }
+
+
+def guardar_foto(pagina, url_foto, usuario, carpeta):
+    """Descarga la foto de perfil con la sesión del navegador (las URLs del CDN caducan en horas).
+
+    Devuelve la ruta relativa a raw/ (p. ej. 'fotos/usuario.jpg') o None si no se pudo.
+    """
+    if not (carpeta and url_foto and usuario) or url_foto.startswith("data:"):
+        return None
+    try:
+        resp = pagina.context.request.get(url_foto, timeout=20000)
+        if not resp.ok:
+            return None
+        cuerpo = resp.body()
+        if not cuerpo:
+            return None
+        tipo = resp.headers.get("content-type", "")
+        ext = ".png" if "png" in tipo else ".webp" if "webp" in tipo else ".jpg"
+        os.makedirs(carpeta, exist_ok=True)
+        with open(os.path.join(carpeta, usuario + ext), "wb") as f:
+            f.write(cuerpo)
+        return "fotos/" + usuario + ext
+    except Exception as e:
+        print(f"   aviso: no se pudo guardar la foto de {usuario}: {str(e).splitlines()[0]}")
+        return None
 
 
 # ---------------- Extracción ----------------
@@ -174,39 +205,88 @@ def abrir_modal(pagina, usuario, tipo):
     raise RuntimeError(f"No se pudo abrir el modal de {tipo}")
 
 
-def extraer_lista(pagina, usuario_propio, tipo, esperado):
-    """Abre el modal ('followers' o 'following'), hace scroll y devuelve las filas limpias."""
+def _sesion_perdida(pagina):
+    """True si Instagram nos mandó al login o a una verificación (posible bloqueo temporal)."""
+    url = pagina.url
+    return "/accounts/login" in url or "/challenge" in url or "/suspended" in url
+
+
+def extraer_lista(pagina, usuario_propio, tipo, esperado, limite=None, carpeta_fotos=None,
+                  previos=None, al_guardar=None):
+    """Abre el modal ('followers' o 'following'), hace scroll y devuelve las filas limpias.
+
+    limite        : detener al llegar a N usuarios (pruebas). None = todos.
+    carpeta_fotos : si se indica, descarga la foto de cada usuario en el momento.
+    previos       : registros ya capturados en una corrida anterior (reanudación).
+    al_guardar    : función(lista) llamada cada CHECKPOINT_CADA usuarios nuevos y SIEMPRE al terminar,
+                    incluso si ocurre un error (así no se pierde lo capturado).
+    """
+    limite = limite or LIMITE_CONEXIONES
     abrir_modal(pagina, usuario_propio, tipo)
     pagina.wait_for_timeout(pausa(2, 3))
 
-    encontrados = {}
+    encontrados = {r["usuario"]: r for r in (previos or [])}
+    vistos = set()                 # usuarios que el modal mostró en ESTA corrida (mide el progreso del scroll)
     sin_progreso = scrolls = 0
+    ultimo_guardado = len(encontrados)
     propio = usuario_propio.lower()
 
-    while sin_progreso < MAX_SIN_PROGRESO and scrolls < MAX_SCROLLS:
-        antes = len(encontrados)
-        for fila in pagina.evaluate(JS_FILAS):
-            reg = limpiar_conexion(fila["usuario"], fila["texto"])
-            if reg and reg["usuario"] != propio and reg["usuario"] not in encontrados:
-                encontrados[reg["usuario"]] = reg
+    try:
+        while sin_progreso < MAX_SIN_PROGRESO and scrolls < MAX_SCROLLS:
+            if _sesion_perdida(pagina):
+                raise RuntimeError("Instagram pidió iniciar sesión o verificación (posible bloqueo temporal)")
 
-        sin_progreso = sin_progreso + 1 if len(encontrados) == antes else 0
-        print(f"  {tipo}: {len(encontrados)}" + (f"/{esperado}" if esperado else ""))
+            nuevos_en_pantalla = 0
+            for fila in pagina.evaluate(JS_FILAS):
+                reg = limpiar_conexion(fila["usuario"], fila["texto"])
+                if not reg or reg["usuario"] == propio:
+                    continue
+                u = reg["usuario"]
+                if u not in vistos:
+                    vistos.add(u)
+                    nuevos_en_pantalla += 1
+                if u in encontrados:
+                    # reanudación: completar la foto si faltaba
+                    if carpeta_fotos and not encontrados[u].get("foto_archivo"):
+                        encontrados[u]["foto_archivo"] = guardar_foto(pagina, fila.get("foto"), u, carpeta_fotos)
+                    continue
+                reg["foto_archivo"] = guardar_foto(pagina, fila.get("foto"), u, carpeta_fotos)
+                encontrados[u] = reg
+                if limite and len(encontrados) >= limite:
+                    break
 
-        if esperado and len(encontrados) >= esperado:
-            break
-        if LIMITE_CONEXIONES and len(encontrados) >= LIMITE_CONEXIONES:
-            break
+            sin_progreso = 0 if nuevos_en_pantalla else sin_progreso + 1
+            print(f"  {tipo}: {len(encontrados)}" + (f"/{esperado}" if esperado else ""))
 
-        pagina.evaluate(JS_SCROLL)
-        pagina.wait_for_timeout(pausa())
-        scrolls += 1
+            if al_guardar and len(encontrados) - ultimo_guardado >= CHECKPOINT_CADA:
+                al_guardar(list(encontrados.values()))
+                ultimo_guardado = len(encontrados)
 
-    pagina.keyboard.press("Escape")
-    pagina.wait_for_timeout(pausa(1, 2))
+            if esperado and len(encontrados) >= esperado:
+                break
+            if limite and len(encontrados) >= limite:
+                break
 
-    lista = list(encontrados.values())
-    return lista[:LIMITE_CONEXIONES] if LIMITE_CONEXIONES else lista
+            pagina.evaluate(JS_SCROLL)
+            pagina.wait_for_timeout(pausa() + min(sin_progreso, 8) * 1000)   # si no carga, espera cada vez más
+            scrolls += 1
+
+        if esperado and len(encontrados) < esperado and sin_progreso >= MAX_SIN_PROGRESO:
+            print(f"  [!] Instagram dejó de cargar usuarios nuevos tras {MAX_SIN_PROGRESO} intentos seguidos "
+                  f"({len(encontrados)} de {esperado}). En perfiles muy grandes Instagram limita la lista que muestra; "
+                  "si el perfil es pequeño, vuelve a ejecutar el comando para continuar desde aquí.")
+    finally:
+        lista = list(encontrados.values())
+        lista = lista[:limite] if limite else lista
+        if al_guardar:
+            al_guardar(lista)
+        try:
+            pagina.keyboard.press("Escape")
+            pagina.wait_for_timeout(pausa(1, 2))
+        except Exception:
+            pass
+
+    return lista
 
 
 def extraer_conexiones(pagina, usuario, perfil=None):
@@ -230,7 +310,7 @@ def extraer_conexiones(pagina, usuario, perfil=None):
 
 
 # ---------------- Tratamiento y exportación ----------------
-COLUMNAS_BASE = ["usuario", "nombre", "tiene_nombre", "url"]
+COLUMNAS_BASE = ["usuario", "nombre", "tiene_nombre", "url", "foto_archivo"]
 
 
 def _tabla(filas, columna_cruce, otros):

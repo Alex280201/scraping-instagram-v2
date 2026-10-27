@@ -2,8 +2,6 @@
 import os
 from dotenv import load_dotenv
 
-from src import corridas
-
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
@@ -40,43 +38,33 @@ def resolver_usuario(argumento=None):
 
 
 class Rutas:
-    """Carpetas y archivos de un usuario:  datos/<usuario>/<corrida>/{raw, embeddings, resultados, seguidores}"""
+    """Carpetas y archivos de un usuario:  datos/<usuario>/{raw, embeddings, resultados}"""
 
-    def __init__(self, usuario, corrida=None):
+    def __init__(self, usuario):
         self.usuario = usuario
-        self.corrida_nombre = corrida
-        if corrida:
-            base = os.path.join(DATOS_DIR, usuario, corrida)
-            if not os.path.isdir(base):
-                # intenta buscarla
-                encontrada = corridas.buscar_corrida(usuario, corrida)
-                if encontrada:
-                    base = encontrada
-            self.base = base
-        else:
-            encontrada = corridas.buscar_corrida(usuario)
-            if encontrada:
-                self.base = encontrada
-            else:
-                self.base = os.path.join(DATOS_DIR, usuario)
+        self.base = os.path.join(DATOS_DIR, usuario)
         self.raw = os.path.join(self.base, "raw")                 # lo recolectado por el scraping
         self.imagenes = os.path.join(self.raw, "imagenes")
+        self.fotos = os.path.join(self.raw, "fotos")              # fotos de perfil de los seguidores
         self.embeddings = os.path.join(self.base, "embeddings")   # vectores generados con Gemini
         self.resultados = os.path.join(self.base, "resultados")   # perfil Big Five
-        self.seguidores = os.path.join(self.base, "seguidores")
         self.datos_json = os.path.join(self.raw, "instagram_datos.json")
         self.datos_csv = os.path.join(self.raw, "instagram_publicaciones.csv")
         self.datos_xlsx = os.path.join(self.raw, "instagram_publicaciones.xlsx")
         self.conexiones_json = os.path.join(self.raw, "instagram_conexiones.json")
+        self.seguidores_json = os.path.join(self.raw, "seguidores_lista.json")   # lista de seguidores (con checkpoint)
+        self.contadores_json = os.path.join(self.raw, "seguidores_contadores.json")  # seguidos/seguidores de cada seguidor
+        self.seguidores_xlsx = os.path.join(self.raw, "instagram_seguidores_stats.xlsx")  # Excel: foto, nombre, contadores, 1er dígito
         self.emb_npy = os.path.join(self.embeddings, "embeddings.npy")
         self.emb_meta = os.path.join(self.embeddings, "metadatos.json")
         self.bigfive_json = os.path.join(self.resultados, "perfil_bigfive.json")
+        self.benford_json = os.path.join(self.resultados, "benford.json")
 
     def crear(self):
-        for carpeta in (self.raw, self.embeddings, self.resultados, self.seguidores):
+        for carpeta in (self.raw, self.embeddings, self.resultados):
             os.makedirs(carpeta, exist_ok=True)
         return self
 
 
-def rutas_usuario(usuario, corrida=None):
-    return Rutas(usuario, corrida=corrida)
+def rutas_usuario(usuario):
+    return Rutas(usuario)
