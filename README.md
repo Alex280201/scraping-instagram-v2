@@ -1,71 +1,107 @@
-# Scraping de Instagram → Embeddings (Gemini) → Perfil Big Five
+# 📊 Auditoría y Análisis Modular de Instagram (v2)
 
-Proyecto académico. **Solo se debe usar con cuentas cuya titular haya dado su autorización.**
-Los datos recolectados quedan en `datos/` (excluida de Git) y nunca se suben a GitHub.
+Proyecto académico de arquitectura de software para la auditoría y análisis avanzado de cuentas de Instagram. El sistema integra un pipeline modular que combina web scraping persistente, análisis estadístico forense mediante la **Ley de Benford** (para detección de anomalías y crecimiento artificial de audiencias), procesamiento de lenguaje natural con **Embeddings**, evaluación psicométrica automatizada (**Big Five / OCEAN**) y la generación automática de un **mini-sitio web interactivo**.
 
-## Estructura
+> **Nota ética:** Proyecto académico. Solo se debe utilizar con cuentas cuya titular haya dado su autorización explícita. Los datos recolectados se almacenan localmente en la carpeta `datos/` (excluida del control de versiones mediante `.gitignore`) y nunca se suben al repositorio público.
 
-```
-├── main.py                    único punto de entrada
-├── .env  (.env.example)       API key de Gemini, modelos y perfil por defecto
-├── requirements.txt
+---
+
+## 🏗️ Arquitectura y Estructura del Proyecto
+
+```text
+scraping-instagram-v2/
+│
 ├── src/
-│   ├── config.py              rutas, .env, modelos
-│   ├── scraping/              scraper.py · conexiones.py · sesion_util.py · guardar_sesion.py
-│   ├── embeddings/            embeddings.py       (vectores con Gemini)
-│   ├── gemini/                cliente.py          (API key / cliente)
-│   └── analisis/              cargador.py · privacidad.py · bigfive.py
-├── datos/<usuario>/
-│   ├── raw/                   lo recolectado: JSON, CSV, Excel, imagenes/
-│   ├── embeddings/            embeddings.npy, metadatos.json
-│   └── resultados/            perfil_bigfive.json
-└── legacy/                    scripts y datos de versiones anteriores
+│   ├── analisis/       # Módulo psicométrico Big Five, cargador de textos y privacidad
+│   ├── benford/        # Análisis estadístico de la Ley de Benford y graficador interactivo
+│   ├── embeddings/     # Generación y gestión de vectores semánticos con Gemini
+│   ├── exportar/       # Generadores de reportes en Excel y mini-sitio web HTML
+│   ├── scraping/       # Scrapers de perfil, publicaciones, seguidores y contadores
+│   └── pipeline.py     # Orquestador principal del flujo end-to-end
+│
+├── datos/              # Almacenamiento local de perfiles, raw, embeddings y resultados (.gitignore)
+├── legacy/             # Scripts y respaldos de versiones anteriores
+├── tests/              # Pruebas unitarias y validación de corridas
+├── main.py             # Único punto de entrada centralizado (CLI)
+├── requirements.txt    # Dependencias de Python
+└── .env.example        # Plantilla de configuración de variables de entorno
+
 ```
 
-## Instalación
+---
 
-```powershell
+## ⚙️ Instalación y Configuración
+
+1. **Clonar el repositorio:**
+```bash
+git clone https://github.com/Alex280201/scraping-instagram-v2.git
+cd scraping-instagram-v2
+
+```
+
+
+2. **Crear y activar el entorno virtual:**
+```bash
 python -m venv venv
+# En Windows (PowerShell):
 .\venv\Scripts\Activate.ps1
+
+```
+
+
+3. **Instalar dependencias y navegadores:**
+```bash
 pip install -r requirements.txt
 playwright install chromium
-copy .env.example .env      # y completa GEMINI_API_KEY
+
 ```
 
-## Uso
+
+4. **Configurar variables de entorno:**
+```bash
+copy .env.example .env
+
+```
+
+
+*(Abre el archivo `.env` resultante y configura tu clave `GEMINI_API_KEY` y los parámetros del objetivo).*
+
+---
+
+## 🚀 Guía de Uso (CLI Centralizada en `main.py`)
+
+El sistema se opera mediante comandos modulares desde la terminal:
 
 ```powershell
-python main.py sesion                  # una vez (o si caduca): guarda tu sesión de Instagram
-python main.py scrape usuario          # scraping + imágenes -> datos/usuario/raw/
-python main.py seguidores usuario      # lista de seguidores (usuario, nombre, foto) -> datos/usuario/raw/
-python main.py contadores usuario      # seguidos/seguidores de cada seguidor de la lista (3 workers) -> raw/seguidores_contadores.json
-python main.py excel usuario           # Excel de seguidores: foto, nombre, seguidos, seguidores y primer dígito (fórmula) -> raw/instagram_seguidores_stats.xlsx
-python main.py benford usuario         # Ley de Benford + chi-cuadrada + MAD -> veredicto humano / posible bot / bot (resultados/benford.json)
-python main.py completo usuario        # PRUEBA GLOBAL: publicaciones → seguidores → contadores → Benford → Excel → Big Five → informe
-python main.py informe usuario         # informe final HTML: datos del perfil + Benford + Big Five (texto, sin gráfica) -> resultados/informe.html
-python main.py analizar usuario        # embeddings + Big Five -> datos/usuario/
-python main.py todo usuario            # las dos cosas
+python main.py sesion                  # Configura y guarda la sesión persistente de Instagram
+python main.py scrape usuario          # Scraping de publicaciones, métricas e imágenes
+python main.py seguidores usuario      # Extracción de la lista completa de seguidores
+python main.py contadores usuario      # Análisis de seguidos/seguidores por cada seguidor (soporta workers)
+python main.py excel usuario           # Genera reporte Excel con estadísticas y fórmula de primer dígito
+python main.py benford usuario         # Aplica la Ley de Benford (Chi-cuadrada, simulación Monte Carlo, MAD)
+python main.py informe usuario --abrir # Genera y abre el mini-sitio web HTML con radar interactivo del Big Five
+python main.py analizar usuario        # Ejecuta la vectorización de textos y la evaluación Big Five (OCEAN)
+python main.py completo usuario        # Ejecuta el pipeline global encadenado de todos los módulos
+
 ```
 
-`seguidores` guarda el avance cada 20 usuarios; si Instagram corta o bloquea, repite el mismo comando y continúa donde quedó (`--reiniciar` empieza de cero, `--sin-fotos` omite las fotos).
+---
 
-`contadores` visita el perfil de cada seguidor de la lista (`--workers N`, por defecto 3 y máximo 6; `--limite N` para pruebas; `--ver` muestra el navegador). Se detiene solo si Instagram pide login/verificación, responde 429 o falla varias veces seguidas, y al repetir el comando continúa con los pendientes. Cada perfil queda como `ok`, `privado` (los contadores siguen siendo visibles), `no_existe` o `error` (se reintenta).
+## 🔍 Descripción Detallada de Módulos
 
-`benford` analiza el primer dígito del número de seguidores de los seguidores (solo perfiles `ok`/`privado` con seguidores > 0). Veredicto por valor p de la chi-cuadrada (8 g.l.): p ≥ 0.05 humano · 0.01 ≤ p < 0.05 posible bot · p < 0.01 bot. Funciona con cualquier cantidad de seguidores por cuenta (los de 1 a 9 seguidores cuentan con su propio número; solo los de 0 no tienen primer dígito y se cuentan aparte). Con 110 datos o más se usa la chi-cuadrada clásica; con 30 a 109 el valor p se calcula por simulación Monte Carlo (exacto para ese tamaño, pero con poca potencia: solo detecta desviaciones grandes); con menos de 30 no se da veredicto (`--minimo N` lo cambia). El MAD de Nigrini se muestra como control, referencial con menos de 1000 datos. `benford` también genera la gráfica (`resultados/benford.png` y `benford.html` interactivo, `--abrir` lo abre en el navegador, `--sin-grafica` la omite): barras = observado, línea roja = Benford, banda gris = rango del 95 % para una muestra de ese tamaño, panel inferior = diferencia en puntos porcentuales, y el veredicto con χ², p y MAD en el encabezado. El Excel (`excel`) incluye la hoja `Benford` con la misma prueba en fórmulas. El resultado describe a la audiencia en conjunto, no a cuentas individuales.
+1. **Scraping y Conexiones (`src/scraping/`):**
+Extracción automatizada y resiliente de perfiles, publicaciones e interacciones mediante Playwright con soporte para sesiones persistentes y mecanismos de recuperación ante bloqueos temporales.
+2. **Ley de Benford (`src/benford/`):**
+Auditoría estadística sobre el primer dígito del conteo de seguidores para evaluar la autenticidad de la audiencia. Emplea pruebas de Chi-cuadrada clásica, simulación Monte Carlo para muestras medianas y la desviación MAD de Nigrini, generando gráficos interactivos detallados (`.html` y `.png`).
+3. **Procesamiento y Embeddings (`src/embeddings/`):**
+Anonimización y vectorización de biografías y descripciones de publicaciones para capturar patrones semánticos locales utilizando modelos de lenguaje avanzados.
+4. **Perfil Psicométrico Big Five (`src/analisis/`):**
+Estimación de los 5 grandes rasgos de la personalidad (Apertura, Responsabilidad, Extraordinariedad/Extraversión, Amabilidad y Neuroticismo) a partir de los textos del usuario, con un sistema inteligente de respaldo y reintentos ante limitaciones de API.
+5. **Mini-sitio Web e Informes (`src/exportar/`):**
+Consolidación de toda la auditoría en un reporte web estructurado con diseño ejecutivo, tablas de métricas y gráficos de radar interactivos.
 
-`completo` encadena todos los pasos (cada uno es reanudable; si Instagram corta, repite el mismo comando). `--sin-publicaciones` omite el scraping de publicaciones y el Big Five, `--sin-bigfive` solo el Big Five, `--limite N` limita los seguidores capturados. El Big Five del informe es texto y tabla; `--radar` añade un gráfico radar si se necesita.
+---
 
-Opciones: `--si` (sin confirmación) · `--sin-imagenes` · `--conexiones` (seguidores/seguidos) · `--limite N` · `--forzar` (regenera embeddings).
-Si omites `usuario` se usa `INSTAGRAM_TARGET` del `.env`.
+## 👨‍💻 Autor
 
-## Flujo
-
-1. **Scraping:** publicaciones (fecha, likes, descripción, imagen) del perfil indicado.
-2. **Embeddings:** biografía y descripciones se anonimizan (correos, teléfonos, enlaces) y se vectorizan con `gemini-embedding-001`.
-3. **Big Five:** se recupera la evidencia por rasgo y Gemini estima puntaje y confianza de cada rasgo OCEAN, con un tope de confianza según la cantidad de texto.
-
-## Limitaciones y ética
-
-- El resultado es una **estimación exploratoria**, no una medición psicológica válida.
-- Requiere consentimiento de la titular; respeta los términos de uso de Instagram y la Ley de Protección de Datos Personales.
-- No se recolectan comentarios de terceros.
+Desarrollado por **Alex** para proyectos de Arquitectura de Software.
