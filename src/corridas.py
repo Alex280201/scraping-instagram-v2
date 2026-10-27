@@ -3,7 +3,7 @@ import os
 import re
 from datetime import datetime
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATOS = os.path.join(BASE, "datos")
 _PATRON = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{4}$")
 
@@ -16,8 +16,12 @@ def listar_corridas(usuario):
     base = carpeta_usuario(usuario)
     if not os.path.isdir(base):
         return []
-    return sorted(d for d in os.listdir(base)
-                  if _PATRON.match(d) and os.path.isdir(os.path.join(base, d)))
+    corridas = []
+    for d in os.listdir(base):
+        ruta = os.path.join(base, d)
+        if os.path.isdir(ruta) and _PATRON.match(d):
+            corridas.append(d)
+    return sorted(corridas)
 
 
 def nueva_corrida(usuario):
@@ -36,6 +40,9 @@ def buscar_corrida(usuario, nombre=None):
     corridas = listar_corridas(usuario)
     if corridas:
         return os.path.join(base, corridas[-1])
-    if os.path.exists(os.path.join(base, "instagram_datos.json")):  # carpeta antigua, sin fecha
+    # compatibilidad: carpeta antigua sin fecha
+    if os.path.exists(os.path.join(base, "raw")):
+        return base
+    if os.path.exists(os.path.join(base, "instagram_datos.json")):
         return base
     return None

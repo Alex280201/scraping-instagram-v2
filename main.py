@@ -1,12 +1,12 @@
 """Punto de entrada del proyecto.
 
   python main.py sesion                      Guardar la sesión de Instagram (solo la primera vez o si caduca)
-  python main.py scrape   [usuario]          Scraping -> datos/<usuario>/raw/
+  python main.py scrape   [usuario]          Scraping -> datos/<usuario>/<fecha>/raw/
   python main.py analizar [usuario]          Embeddings (Gemini) + perfil Big Five -> datos/<usuario>/
   python main.py todo     [usuario]          scrape + analizar
 
 Si no indicas usuario se usa INSTAGRAM_TARGET del .env.
-Opciones:  --si (sin pedir confirmación)  --sin-imagenes  --conexiones  --limite N  --forzar
+Opciones:  --si (sin pedir confirmación)  --sin-imagenes  --conexiones  --limite N  --forzar  --corrida <nombre>
 """
 import argparse
 
@@ -29,6 +29,7 @@ def crear_parser():
             p.add_argument("--limite", type=int, help="procesar solo N publicaciones (pruebas)")
         if nombre != "scrape":
             p.add_argument("--forzar", action="store_true", help="regenerar los embeddings")
+        p.add_argument("--corrida", help="carpeta de corrida (fecha_hora) a usar")
     return ap
 
 
@@ -48,7 +49,7 @@ def main(argv=None):
 
     if args.comando in ("analizar", "todo"):
         from src.analisis.bigfive import generar_perfil_bigfive
-        generar_perfil_bigfive(usuario, forzar=getattr(args, "forzar", False))
+        generar_perfil_bigfive(usuario, forzar=getattr(args, "forzar", False), corrida=getattr(args, "corrida", None))
 
 
 if __name__ == "__main__":

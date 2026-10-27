@@ -2,6 +2,8 @@
 import os
 from dotenv import load_dotenv
 
+from src import corridas
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
@@ -38,15 +40,30 @@ def resolver_usuario(argumento=None):
 
 
 class Rutas:
-    """Carpetas y archivos de un usuario:  datos/<usuario>/{raw, embeddings, resultados}"""
+    """Carpetas y archivos de un usuario:  datos/<usuario>/<corrida>/{raw, embeddings, resultados, seguidores}"""
 
-    def __init__(self, usuario):
+    def __init__(self, usuario, corrida=None):
         self.usuario = usuario
-        self.base = os.path.join(DATOS_DIR, usuario)
+        self.corrida_nombre = corrida
+        if corrida:
+            base = os.path.join(DATOS_DIR, usuario, corrida)
+            if not os.path.isdir(base):
+                # intenta buscarla
+                encontrada = corridas.buscar_corrida(usuario, corrida)
+                if encontrada:
+                    base = encontrada
+            self.base = base
+        else:
+            encontrada = corridas.buscar_corrida(usuario)
+            if encontrada:
+                self.base = encontrada
+            else:
+                self.base = os.path.join(DATOS_DIR, usuario)
         self.raw = os.path.join(self.base, "raw")                 # lo recolectado por el scraping
         self.imagenes = os.path.join(self.raw, "imagenes")
         self.embeddings = os.path.join(self.base, "embeddings")   # vectores generados con Gemini
         self.resultados = os.path.join(self.base, "resultados")   # perfil Big Five
+        self.seguidores = os.path.join(self.base, "seguidores")
         self.datos_json = os.path.join(self.raw, "instagram_datos.json")
         self.datos_csv = os.path.join(self.raw, "instagram_publicaciones.csv")
         self.datos_xlsx = os.path.join(self.raw, "instagram_publicaciones.xlsx")
@@ -56,10 +73,10 @@ class Rutas:
         self.bigfive_json = os.path.join(self.resultados, "perfil_bigfive.json")
 
     def crear(self):
-        for carpeta in (self.raw, self.embeddings, self.resultados):
+        for carpeta in (self.raw, self.embeddings, self.resultados, self.seguidores):
             os.makedirs(carpeta, exist_ok=True)
         return self
 
 
-def rutas_usuario(usuario):
-    return Rutas(usuario)
+def rutas_usuario(usuario, corrida=None):
+    return Rutas(usuario, corrida=corrida)

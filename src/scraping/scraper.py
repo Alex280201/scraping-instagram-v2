@@ -1,4 +1,4 @@
-"""Scraper: perfil + publicaciones (+ imágenes) -> datos/<usuario>/raw/ en JSON, CSV y Excel.
+"""Scraper: perfil + publicaciones (+ imágenes) -> datos/<usuario>/<corrida>/raw/ en JSON, CSV y Excel.
 
 Se usa desde main.py:   python main.py scrape <usuario>
 """
@@ -13,6 +13,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+from src import corridas
 from src.config import rutas_usuario
 from src.scraping.conexiones import exportar_conexiones, extraer_conexiones
 from src.scraping.sesion_util import abrir_con_sesion
@@ -220,7 +221,9 @@ def exportar(perfil, publicaciones, errores, rutas):
 
 # ---------------- Programa principal ----------------
 def scrapear(usuario, guardar_imagenes=True, con_conexiones=False, confirmar=True, limite=None):
-    rutas = rutas_usuario(usuario)
+    corrida_dir = corridas.nueva_corrida(usuario)
+    corrida_nombre = os.path.basename(corrida_dir)
+    rutas = rutas_usuario(usuario, corrida=corrida_nombre)
     print(f"\nPerfil a scrapear: @{usuario}")
     print(f"Carpeta de salida: {rutas.raw}")
     if confirmar:
